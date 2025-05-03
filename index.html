@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Bitcoin Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            margin: 0;
+            height: 100vh;
+            overflow: hidden;
+            position: relative;
+        }
+        #price-chart {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0.3; /* Increased visibility */
+            transform: rotate(-5deg);
+            z-index: 1;
+        }
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 2;
+        }
+        #price {
+            font-size: 5em;
+            font-weight: 700;
+            transition: color 0.5s ease;
+            padding: 40px 0;
+            color: #e0e0e0;
+        }
+        .metrics {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 20px;
+        }
+        .metric-block {
+            background-color: rgba(42, 42, 42, 0.9);
+            padding: 12px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+            font-size: 0.9em;
+            text-align: center;
+            min-width: 130px;
+            color: #e0e0e0;
+            font-weight: 500;
+        }
+        .metric-block strong {
+            font-weight: 600;
+        }
+        .green {
+            color: #00ff00 !important;
+        }
+        .red {
+            color: #ff0000 !important;
+        }
+        .error {
+            color: #ff5555;
+            font-size: 0.9em;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="price-chart"></canvas>
+    <div class="overlay">
+        <div id="price">$0.00</div>
+        <div class="metrics">
+            <div class="metric-block">
+                <strong>Block Height</strong><br>
+                <span id="block-height">Loading...</span>
+            </div>
+            <div class="metric-block">
+                <strong>Sats per USD</strong><br>
+                <span id="sats-per-dollar">Loading...</span>
+            </div>
+            <div class="metric-block">
+                <strong>Hashrate (24h)</strong><br>
+                <span id="hashrate">Loading...</span>
+            </div>
+            <div class="metric-block">
+                <strong>All-Time High</strong><br>
+                <span id="ath">Loading...</span>
+            </div>
+            <div class="metric-block">
+                <strong>Fear & Greed Index</strong><br>
+                <span id="fear-greed">Loading...</span>
+            </div>
+        </div>
+        <div id="error" class="error"></div>
+    </div>
+
+    <script>
+        let lastPrice = null;
+        const errorElement = document.getElementById('error');
+        let lastBlockHeight = null;
+        let lastHashrate = null;
+        let lastFearGreed = null;
+        let lastAth = null;
+        let priceChart = null;
+
+        // Initialize Chart.js
+        const ctx = document.getElementById('price-chart').getContext('2d');
+        priceChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    data: [],
+                    borderColor: '#F7931A',
+                    borderWidth: 2, /* Increased line thickness */
+                    fill: true,
+                    pointRadius: 0,
+                }]
+            },
+            options: {
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { enabled: false },
+                },
+                scales: {
+                    x: { display: false },
+                    y: { display: false },
+                },
+                elements: {
+                    line: { tension: 0.4 },
+                },
+                animation: false,
+            }
+        });
+
+        async function fetchBitcoinData() {
+            let errors = [];
+
+            // Fetch current price and ATH from CryptoCompare
+            let currentPrice = null;
+            let ath = lastAth || 'N/A';
+            try {
+                const priceResponse = await fetch('https://min-api.cryptocompare.com/data/pricemultifull?fsyms=BTC&tsyms=USD');
+                if (!priceResponse.ok) throw new Error(`CryptoCompare price fetch failed: ${priceResponse.status}`);
+                const priceData = await priceResponse.json();
+                currentPrice = priceData.RAW.BTC.USD.PRICE;
+                //ath = priceData.RAW.BTC.USD.HIGH24HOUR; // 24-hour high as proxy for ATH
+                //lastAth = ath;
+                console.log('CryptoCompare price fetch successful:', currentPrice);
+            } catch (err) {
+                console.error('CryptoCompare price fetch error:', err.message);
+                errors.push('Price fetch failed: ' + err.message);
+                currentPrice = lastPrice || null;
+            }
+            
+            // Fetch price data from CoinGecko
+            try {
+                const priceResponse = await fetch('https://api.coingecko.com/api/v3/coins/bitcoin');
+                if (!priceResponse.ok) throw new Error('Failed to fetch price from CoinGecko');
+                const priceData = await priceResponse.json();
+                ath = priceData.market_data.ath.usd;
+            } catch (err) {
+                ath = ath || 'N/A';
+                errorElement.textContent = 'Price fetch failed. Using last known value.';
+            }
+
+            // Fetch historical price data for chart (last 24 hours) using CryptoCompare
+            let priceHistory = [];
+            try {
+                const historyResponse = await fetch('https://min-api.cryptocompare.com/data/v2/histohour?fsym=BTC&tsym=USD&limit=24');
+                if (!historyResponse.ok) throw new Error(`CryptoCompare history fetch failed: ${historyResponse.status}`);
+                const historyData = await historyResponse.json();
+                priceHistory = historyData.Data.Data.map(entry => ({
+                    time: new Date(entry.time * 1000).toLocaleTimeString(),
+                    value: entry.close
+                }));
+                priceChart.data.labels = priceHistory.map(p => p.time);
+                priceChart.data.datasets[0].data = priceHistory.map(p => p.value);
+                priceChart.update();
+                console.log('CryptoCompare history fetch successful:', priceHistory.length, 'points');
+            } catch (err) {
+                console.error('CryptoCompare history fetch error:', err.message);
+                errors.push('Price history fetch failed: ' + err.message);
+            }
+
+            // Fetch block height from Mempool.space
+            let blockHeight = lastBlockHeight || 'N/A';
+            try {
+                const blockHeightResponse = await fetch('https://mempool.space/api/blocks/tip/height');
+                if (!blockHeightResponse.ok) throw new Error(`Mempool.space block height fetch failed: ${blockHeightResponse.status}`);
+                blockHeight = await blockHeightResponse.json();
+                lastBlockHeight = blockHeight;
+                console.log('Mempool.space block height fetch successful:', blockHeight);
+            } catch (err) {
+                console.error('Mempool.space block height fetch error:', err.message);
+                errors.push('Block height fetch failed: ' + err.message);
+            }
+
+            // Fetch hashrate from Mempool.space
+            let hashrate = lastHashrate || 'N/A';
+            try {
+                const hashrateResponse = await fetch('https://mempool.space/api/v1/mining/hashrate/1d');
+                if (!hashrateResponse.ok) throw new Error(`Mempool.space hashrate fetch failed: ${hashrateResponse.status}`);
+                const hashrateData = await hashrateResponse.json();
+                hashrate = hashrateData.currentHashrate;
+                lastHashrate = hashrate;
+                console.log('Mempool.space hashrate fetch successful:', hashrate);
+            } catch (err) {
+                console.error('Mempool.space hashrate fetch error:', err.message);
+                errors.push('Hashrate fetch failed: ' + err.message);
+            }
+
+            // Fetch Fear & Greed Index
+            let fearGreed = lastFearGreed || 'N/A';
+            try {
+                const fearGreedResponse = await fetch('https://api.alternative.me/fng/?limit=1');
+                if (!fearGreedResponse.ok) throw new Error(`Fear & Greed fetch failed: ${fearGreedResponse.status}`);
+                const fearGreedData = await fearGreedResponse.json();
+                fearGreed = fearGreedData.data[0].value + ' (' + fearGreedData.data[0].value_classification + ')';
+                lastFearGreed = fearGreed;
+                console.log('Fear & Greed fetch successful:', fearGreed);
+            } catch (err) {
+                console.error('Fear & Greed fetch error:', err.message);
+                errors.push('Fear & Greed fetch failed: ' + err.message);
+            }
+
+            // Update price and flicker color
+            const priceElement = document.getElementById('price');
+            if (currentPrice !== null) {
+                // Format price with exactly 2 decimal places
+                const formattedPrice = Number(currentPrice).toFixed(2);
+                const integerPart = Math.floor(formattedPrice).toLocaleString('en-US');
+                const decimalPart = formattedPrice.split('.')[1];
+                priceElement.textContent = `$${integerPart}.${decimalPart}`;
+            } else {
+                priceElement.textContent = lastPrice ? `$${Number(lastPrice).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,')}` : 'N/A';
+            }
+
+            // Flickering logic with logging
+            console.log('Price comparison - lastPrice:', lastPrice, 'currentPrice:', currentPrice);
+            if (lastPrice !== null && currentPrice !== null) {
+                const priceDifference = currentPrice - lastPrice;
+                console.log('Price difference:', priceDifference);
+                if (priceDifference > 0) {
+                    console.log('Price increased - flashing green');
+                    priceElement.classList.remove('red');
+                    priceElement.classList.add('green');
+                    setTimeout(() => priceElement.classList.remove('green'), 1000);
+                } else if (priceDifference < 0) {
+                    console.log('Price decreased - flashing red');
+                    priceElement.classList.remove('green');
+                    priceElement.classList.add('red');
+                    setTimeout(() => priceElement.classList.remove('red'), 1000);
+                } else {
+                    console.log('Price unchanged - no flash');
+                }
+            } else {
+                console.log('Skipping flash - one of the prices is null');
+            }
+            lastPrice = currentPrice;
+
+            // Update blockchain metrics
+            document.getElementById('block-height').textContent = blockHeight === 'N/A' ? 'N/A' : blockHeight.toLocaleString();
+            document.getElementById('sats-per-dollar').textContent = currentPrice === null ? 'N/A' : Math.round(1e8 / currentPrice).toLocaleString();
+            document.getElementById('hashrate').textContent = hashrate === 'N/A' ? 'N/A' : (hashrate / 1e18).toFixed(2) + ' EH/s';
+            document.getElementById('ath').textContent = ath === 'N/A' ? 'N/A' : `$${Number(ath).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,')}`;
+            document.getElementById('fear-greed').textContent = fearGreed;
+
+            // Display errors if any
+            if (errors.length > 0) {
+                errorElement.textContent = errors.join(' | ') + '. Retrying in 20 seconds...';
+            } else {
+                errorElement.textContent = '';
+            }
+        }
+
+        // Fetch data initially and every 20 seconds
+        fetchBitcoinData();
+        setInterval(fetchBitcoinData, 20000);
+    </script>
+</body>
+</html>
