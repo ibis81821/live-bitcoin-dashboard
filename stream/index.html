@@ -79,20 +79,20 @@
             bottom: 0;
             left: 0;
             width: 100%;
-            background-color: rgba(32, 32, 32, 0.9);
+            background-color: rgba(32, 32, 32, 0.9); /* Updated background color */
             color: #e0e0e0;
-            font-size: 1.2em; /* Increased font size */
+            font-size: 1em;
             overflow: hidden;
             white-space: nowrap;
             z-index: 3;
         }
         .ticker {
             display: inline-block;
-            padding: 20px 0; /* Increased vertical padding */
-            animation: scroll 45s linear infinite; /* Slowed scroll speed */
+            padding: 10px 0;
+            animation: scroll 45s linear infinite;
         }
         .ticker span {
-            margin-right: 80px; /* Increased spacing between items */
+            margin-right: 80px;
             display: inline-flex;
             align-items: center;
         }
@@ -116,16 +116,16 @@
                 <span id="block-height">Loading...</span>
             </div>
             <div class="metric-block">
+                <strong>Market Cap</strong><br>
+                <span id="market-cap">Loading...</span>
+            </div>
+            <div class="metric-block">
                 <strong>Sats per USD</strong><br>
                 <span id="sats-per-dollar">Loading...</span>
             </div>
             <div class="metric-block">
                 <strong>Hashrate (24h)</strong><br>
                 <span id="hashrate">Loading...</span>
-            </div>
-            <div class="metric-block">
-                <strong>All-Time High</strong><br>
-                <span id="ath">Loading...</span>
             </div>
             <div class="metric-block">
                 <strong>Fear & Greed Index</strong><br>
@@ -146,7 +146,7 @@
         let lastBlockHeight = null;
         let lastHashrate = null;
         let lastFearGreed = null;
-        let lastAth = null;
+        let lastMarketCap = null;
         let priceChart = null;
 
         // Initialize Chart.js
@@ -157,8 +157,8 @@
                 labels: [],
                 datasets: [{
                     data: [],
-                    borderColor: '#f7931a', /* Changed border color */
-                    borderWidth: 2, /* Reduced border width */
+                    borderColor: '#f7931a',
+                    borderWidth: 2,
                     fill: false,
                     pointRadius: 0,
                 }]
@@ -179,7 +179,7 @@
             }
         });
 
-        // Ticker data storage
+        // Ticker data storage (IBIT already removed)
         let tickerData = {
             MSTR: { price: 'N/A', percentChange: null },
             MSTY: { price: 'N/A', percentChange: null },
@@ -213,7 +213,7 @@
                 console.error('Ticker fetch error:', err.message);
             }
 
-            // Update ticker display
+            // Update ticker display with new format
             const tickerElement = document.getElementById('ticker');
             tickerElement.innerHTML = tickers.map(ticker => {
                 const price = tickerData[ticker].price;
@@ -221,39 +221,28 @@
                 const colorClass = percentChange !== null ? (percentChange >= 0 ? 'green' : 'red') : '';
                 const arrow = percentChange !== null ? (percentChange >= 0 ? '&#9650;' : '&#9660;') : '';
                 const percentDisplay = percentChange !== null ? `<span class="percent ${colorClass}">${arrow} (${percentChange}%)</span>` : '';
-                return `<span>${ticker} &middot; $${price} ${percentDisplay}</span>`;
+                return `<span>${ticker} &middot; $${price} ${percentDisplay}</span>`; // Removed $ before ticker, added · between ticker and price
             }).join('');
         }
 
         async function fetchBitcoinData() {
             let errors = [];
 
-            // Fetch current price and ATH from CryptoCompare
+            // Fetch current price and market cap from CryptoCompare
             let currentPrice = null;
-            let ath = lastAth || 'N/A';
+            let marketCap = lastMarketCap || 'N/A';
             try {
                 const priceResponse = await fetch('https://min-api.cryptocompare.com/data/pricemultifull?fsyms=BTC&tsyms=USD');
                 if (!priceResponse.ok) throw new Error(`CryptoCompare price fetch failed: ${priceResponse.status}`);
                 const priceData = await priceResponse.json();
                 currentPrice = priceData.RAW.BTC.USD.PRICE;
-                //ath = priceData.RAW.BTC.USD.HIGH24HOUR;
-                //lastAth = ath;
-                console.log('CryptoCompare price fetch successful:', currentPrice);
+                marketCap = priceData.RAW.BTC.USD.MKTCAP;
+                lastMarketCap = marketCap;
+                console.log('CryptoCompare price fetch successful:', currentPrice, 'Market Cap:', marketCap);
             } catch (err) {
                 console.error('CryptoCompare price fetch error:', err.message);
                 errors.push('Price fetch failed: ' + err.message);
                 currentPrice = lastPrice || null;
-            }
-            
-            // Fetch price data from CoinGecko
-            try {
-                const priceResponse = await fetch('https://api.coingecko.com/api/v3/coins/bitcoin');
-                if (!priceResponse.ok) throw new Error('Failed to fetch price from CoinGecko');
-                const priceData = await priceResponse.json();
-                ath = priceData.market_data.ath.usd;
-            } catch (err) {
-                ath = ath || 'N/A';
-                errorElement.textContent = 'Price fetch failed. Using last known value.';
             }
 
             // Fetch historical price data for chart (last 24 hours) using CryptoCompare
@@ -350,11 +339,21 @@
             }
             lastPrice = currentPrice;
 
+            // Format market cap in trillions (T) or billions (B)
+            const formatMarketCap = (cap) => {
+                if (cap === 'N/A') return 'N/A';
+                if (cap >= 1e12) {
+                    return `$${(cap / 1e12).toFixed(2)}T`;
+                } else {
+                    return `$${(cap / 1e9).toFixed(2)}B`;
+                }
+            };
+
             // Update blockchain metrics
             document.getElementById('block-height').textContent = blockHeight === 'N/A' ? 'N/A' : blockHeight.toLocaleString();
             document.getElementById('sats-per-dollar').textContent = currentPrice === null ? 'N/A' : Math.round(1e8 / currentPrice).toLocaleString();
             document.getElementById('hashrate').textContent = hashrate === 'N/A' ? 'N/A' : (hashrate / 1e18).toFixed(2) + ' EH/s';
-            document.getElementById('ath').textContent = ath === 'N/A' ? 'N/A' : `$${Number(ath).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,')}`;
+            document.getElementById('market-cap').textContent = formatMarketCap(marketCap);
             document.getElementById('fear-greed').textContent = fearGreed;
 
             // Display errors if any
